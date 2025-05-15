@@ -43,7 +43,10 @@
     </label>
   </div>
 
-  <div class="control"><button id="refresh-btn">Refresh plot</button></div>
+  <div class="control">
+    <button id="refresh-btn" class="plot-btn">Refresh plot</button>
+    <button id="swap-btn" class="plot-btn">Swap X, Y axis</button>
+  </div>
 </div>
 
 <h2 id="scatter-title"></h2>
@@ -55,6 +58,7 @@ const ySel    = document.getElementById('y-select');
 const yearSel = document.getElementById('year-select');
 const termSel = document.getElementById('term-select');
 const refresh = document.getElementById('refresh-btn');
+const swapBtn = document.getElementById('swap-btn');
 const colorSel = document.getElementById('color-select');
 
 fetch("{{ url_for('analytics.scatter_json') }}")
@@ -75,6 +79,10 @@ fetch("{{ url_for('analytics.scatter_json') }}")
   .catch(console.error);
 
 refresh.addEventListener('click', drawPlot);
+swapBtn.addEventListener('click', () => {
+  [xSel.value, ySel.value] = [ySel.value, xSel.value];
+  drawPlot();
+});
 
 function drawPlot () {
   const x = xSel.value;
@@ -147,7 +155,7 @@ function drawPlot () {
   <div class="control">
     <label><input type="checkbox" id="ts-trend" checked> Show regression lines</label>
   </div>
-  <div class="control"><button id="ts-refresh">Refresh line plot</button></div>
+  <div class="control"><button id="ts-refresh" class="plot-btn">Refresh line plot</button></div>
 </div>
 
 <div id="timeseries" style="width:100%;height:500px;"></div>
