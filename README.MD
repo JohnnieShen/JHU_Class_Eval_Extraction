@@ -30,6 +30,7 @@ In the course_dashboard directory for the first time run:
 
 ```
 python -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 python preprocess.py
 python run.py
