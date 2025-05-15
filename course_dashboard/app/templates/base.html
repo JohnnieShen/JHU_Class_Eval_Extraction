@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Course Dashboard</title>
+
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+
+    <style>
+      body   { font-family: sans-serif; margin: 2em; }
+      header { margin-bottom: 1em; }
+
+      table           { border-collapse: collapse; }
+      th, td          { border: 1px solid #666; padding: 4px 8px; }
+
+      .controls .control { margin-bottom: 0.6em; }
+      .controls label    { display: block; }
+
+      #refresh-btn       { padding: 4px 12px; }
+    </style>
+  </head>
+
+  <body>
+    <header>
+      <h1>Course Stats Dashboard</h1>
+      <nav>
+        <a href="/">Home</a> |
+        <a href="/analytics/top10">Top 10 Courses</a>
+      </nav>
+    </header>
+
+    {% block content %}{% endblock %}
+  </body>
+</html>

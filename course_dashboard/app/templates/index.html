@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Summary</h2>
+<ul>
+  {% for k, v in summary.items() %}
+    <li><strong>{{ k }}:</strong> {{ v }}</li>
+  {% endfor %}
+</ul>
+
+<h2>Customize your scatterplot</h2>
+<div class="controls">
+  <div class="control">
+    <label>X&nbsp;axis: <select id="x-select"></select></label>
+  </div>
+  <div class="control">
+    <label>Y&nbsp;axis: <select id="y-select"></select></label>
+  </div>
+
+  {# colour selector kept commented-out; JS now tolerant #}
+  {# <div class="control">
+       <label>Color by:
+         <select id="color-select">
+           <option value="">— none —</option>
+         </select>
+       </label>
+     </div> #}
+
+  <div class="control">
+    <label>Year:
+      <select id="year-select">
+        <option value="">all</option>
+        {% for y in years %}<option value="{{ y }}">{{ y }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <div class="control">
+    <label>Term:
+      <select id="term-select">
+        <option value="">all</option>
+        {% for t in terms %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <div class="control"><button id="refresh-btn">Refresh plot</button></div>
+</div>
+
+<h2>Workload vs Teaching Effectiveness</h2>
+<div id="scatter" style="width:100%;height:500px;"></div>
+
+<script>
+const xSel    = document.getElementById('x-select');
+const ySel    = document.getElementById('y-select');
+const yearSel = document.getElementById('year-select');
+const termSel = document.getElementById('term-select');
+const refresh = document.getElementById('refresh-btn');
+const colorSel = document.getElementById('color-select');
+
+fetch("{{ url_for('analytics.scatter_json') }}")
+  .then(r => r.json())
+  .then(init => {
+    const selects = [xSel, ySel].concat(colorSel ? [colorSel] : []);
+    init.metrics.forEach(m => {
+      selects.forEach(sel => {
+        const opt = document.createElement('option');
+        opt.value = opt.text = m;
+        sel.appendChild(opt.cloneNode(true));
+      });
+    });
+    xSel.value = init.metrics[0] || '';
+    ySel.value = init.metrics[1] || init.metrics[0] || '';
+    drawPlot();
+  })
+  .catch(console.error);
+
+refresh.addEventListener('click', drawPlot);
+
+function drawPlot () {
+  const params = new URLSearchParams({
+    x: xSel.value, y: ySel.value,
+    year: yearSel.value, term: termSel.value
+  });
+  if (colorSel && colorSel.value) params.append('color', colorSel.value);
+
+  fetch("{{ url_for('analytics.scatter_json') }}?" + params.toString())
+    .then(r => r.json())
+    .then(d => {
+      const trace = {
+        x: d.x, y: d.y, text: d.course_name,
+        mode: 'markers',
+        marker: { size: 8, opacity: 0.7, ...(d.color && { color: d.color }) },
+        customdata: d.course.map((c,i)=>[c,d.instructor[i],d.year[i],d.term[i]]),
+        hovertemplate:
+          'Course: %{customdata[0]}<br>Name: %{text}<br>' +
+          'Instructor: %{customdata[1]}<br>Year: %{customdata[2]}<br>' +
+          'Term: %{customdata[3]}<br>' +
+          `${xSel.value}: %{x:.2f}<br>${ySel.value}: %{y:.2f}<extra></extra>`
+      };
+      Plotly.react('scatter',[trace],
+        {title:'Course workload vs teaching',
+         xaxis:{title:xSel.value}, yaxis:{title:ySel.value}});
+    })
+    .catch(console.error);
+}
+</script>
+
+<hr>
+<h2>Time-series by department / course</h2>
+<div class="controls">
+  <div class="control">
+    <label>Mode:
+      <select id="ts-mode">
+        <option value="dept">Department(s)</option>
+        <option value="course">Course code</option>
+      </select>
+    </label>
+  </div>
+  <div class="control">
+    <label>Dept(s) or Course:
+      <input id="ts-codes" placeholder="AS.020 (comma-sep)…">
+    </label>
+  </div>
+  <div class="control">
+    <label>Metric: <select id="ts-metric"></select></label>
+  </div>
+  <div class="control">
+    <label>Year(s):
+      <select id="ts-years" multiple size="4">
+        {% for y in years %}<option value="{{ y }}">{{ y }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+  <div class="control">
+    <label>Term(s):
+      <select id="ts-terms" multiple size="4">
+        {% for t in terms %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+  <div class="control">
+    <label><input type="checkbox" id="ts-trend" checked> Show regression lines</label>
+  </div>
+  <div class="control"><button id="ts-refresh">Refresh line plot</button></div>
+</div>
+
+<div id="timeseries" style="width:100%;height:500px;"></div>
+
+<script>
+const tsMode  = document.getElementById('ts-mode');
+const tsCodes = document.getElementById('ts-codes');
+const tsMetric= document.getElementById('ts-metric');
+const tsYears = document.getElementById('ts-years');
+const tsTerms = document.getElementById('ts-terms');
+const tsBtn   = document.getElementById('ts-refresh');
+const tsTrend = document.getElementById('ts-trend');
+
+fetch("{{ url_for('analytics.scatter_json') }}")
+  .then(r=>r.json())
+  .then(d=>{ d.metrics.forEach(m=>{
+      const o=document.createElement('option');o.value=o.text=m;tsMetric.appendChild(o);
+  });});
+
+tsBtn.addEventListener('click', drawTS); tsTrend.addEventListener('change',drawTS);
+
+function drawTS(){
+  const years=Array.from(tsYears.selectedOptions).map(o=>o.value).join(',');
+  const terms=Array.from(tsTerms.selectedOptions).map(o=>o.value).join(',');
+  const p=new URLSearchParams({metric:tsMetric.value,years,terms});
+  if(tsMode.value==='dept') p.append('depts',tsCodes.value); else p.append('course',tsCodes.value);
+  const ep = tsMode.value==='dept'
+    ? "{{ url_for('analytics.dept_timeseries') }}"
+    : "{{ url_for('analytics.course_timeseries') }}";
+
+  fetch(ep+'?'+p.toString()).then(r=>r.json()).then(d=>{
+    const traces=d.series.flatMap(s=>{
+      const main={name:s.label,x:s.x,y:s.y,mode:'lines+markers',connectgaps:true};
+      if(!tsTrend.checked) return [main];
+      return [main,{name:`${s.label} trend`,x:s.x,y:s.trend,mode:'lines',
+                    line:{dash:'dash'},hoverinfo:'skip',showlegend:false}];
+    });
+    const isDate = traces.length && /^\d{4}-\d{2}-\d{2}$/.test(traces[0].x[0]);
+    Plotly.react('timeseries',traces,{
+      title:d.metric+' over time',
+      xaxis:{title:'Time',tickangle:-45,...(isDate && {type:'date'})},
+      yaxis:{title:d.metric}});
+  }).catch(console.error);
+}
+</script>
+{% endblock %}

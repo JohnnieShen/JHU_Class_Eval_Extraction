@@ -1,0 +1,4 @@
+venv/
+pdfs/
+__pycache__/
+*.Identifier
