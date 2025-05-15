@@ -46,7 +46,7 @@
   <div class="control"><button id="refresh-btn">Refresh plot</button></div>
 </div>
 
-<h2>Workload vs Teaching Effectiveness</h2>
+<h2 id="scatter-title"></h2>
 <div id="scatter" style="width:100%;height:500px;"></div>
 
 <script>
@@ -77,8 +77,12 @@ fetch("{{ url_for('analytics.scatter_json') }}")
 refresh.addEventListener('click', drawPlot);
 
 function drawPlot () {
+  const x = xSel.value;
+  const y = ySel.value;
+  const titleText = `${x} vs ${y}`;
+  document.getElementById('scatter-title').textContent = titleText;
   const params = new URLSearchParams({
-    x: xSel.value, y: ySel.value,
+    x, y,
     year: yearSel.value, term: termSel.value
   });
   if (colorSel && colorSel.value) params.append('color', colorSel.value);
@@ -86,6 +90,8 @@ function drawPlot () {
   fetch("{{ url_for('analytics.scatter_json') }}?" + params.toString())
     .then(r => r.json())
     .then(d => {
+      const titleText = `${x} vs ${y}`;
+      document.getElementById('scatter-title').textContent = titleText;
       const trace = {
         x: d.x, y: d.y, text: d.course_name,
         mode: 'markers',
@@ -98,7 +104,7 @@ function drawPlot () {
           `${xSel.value}: %{x:.2f}<br>${ySel.value}: %{y:.2f}<extra></extra>`
       };
       Plotly.react('scatter',[trace],
-        {title:'Course workload vs teaching',
+        {margin: { t: 20 },
          xaxis:{title:xSel.value}, yaxis:{title:ySel.value}});
     })
     .catch(console.error);

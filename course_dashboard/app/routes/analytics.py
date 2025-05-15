@@ -92,49 +92,43 @@ def all_term_dates(frame: pd.DataFrame) -> list[str]:
 def month_frac(date_str: str) -> float:
     return FRAC_FOR_MONTH.get(date_str[5:7], 0.0)
 
+_level_pat = re.compile(r"\.(\d{3})$")
+
+def course_level(code: str) -> float | None:
+    m = _level_pat.search(str(code).strip())
+    if not m:
+        return None
+    return (int(m.group(1)) // 100) * 100
+
 @analytics_bp.route("/scatter_json")
 def scatter_json():
     df = load_course_data()
 
     df["instructor"] = df["instructor"].apply(clean_instructor)
+
+    if "course_level" not in df.columns:
+        df["course_level"] = df["course_number"].apply(course_level)
+
     if "size" not in df.columns:
         pat = re.compile(r"\b(\d+)\s+of\s+(\d+)\s+responded", re.I)
-
         def _size(text: str) -> float | None:
-            """Return the total-enrolled number (“… of N responded”)."""
-            m = pat.search(str(text))
-            return float(m.group(2)) if m else None
-
+            m = pat.search(str(text));  return float(m.group(2)) if m else None
         meta_col = next((c for c in ("file_name", "filename", "file")
                          if c in df.columns), None)
         if meta_col:
             df["size"] = df[meta_col].apply(_size)
 
-    x_col = request.args.get(
-        "x",
-        "Compared to other Hopkins courses at this level, the workload for this course is:_mean",
-    )
-    y_col = request.args.get(
-        "y", "The instructor's teaching effectiveness is:_mean"
-    )
+    x_col     = request.args.get("x",  "Compared to other Hopkins courses at this level, the workload for this course is:_mean")
+    y_col     = request.args.get("y",  "The instructor's teaching effectiveness is:_mean")
     color_col = request.args.get("color") or None
     year_filt = request.args.get("year")  or None
     term_filt = request.args.get("term")  or None
 
-    if year_filt:
-        try:
-            df = df[df["year"].fillna(-1).astype(int) == int(float(year_filt))]
-        except ValueError:
-            pass
-    if term_filt:
-        df = df[df["term"].astype(str).str.strip().str.title()
-                      == term_filt.strip().title()]
-
-    cols = [x_col, y_col,
+    cols = [x_col, y_col, "course_level",
             "course_number", "course_name", "instructor", "year", "term"]
     if color_col and color_col not in cols:
         cols.append(color_col)
-
+    cols = list(dict.fromkeys(cols))
     clean   = df[cols].dropna(subset=[x_col, y_col])
     dropped = len(df) - len(clean)
 
@@ -147,7 +141,8 @@ def scatter_json():
         "year":        clean["year"].astype(int).tolist(),
         "term":        clean["term"].tolist(),
         "metrics": [c for c in df.columns
-                    if c.endswith("_mean") or c == "size"],
+                    if (c.endswith("_mean")
+                        or c in ("size", "course_level"))],
         "warning": (f"{dropped} record(s) excluded because of missing "
                     f"{x_col} / {y_col}") if dropped else ""
     }
