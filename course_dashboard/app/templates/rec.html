@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Course Recommender</title>
+</head>
+<body>
+    <h1>Course Recommender</h1>
+
+    <form method="POST">
+        <label for="filter_type">Filter by:</label>
+        <select name="filter_type" id="filter_type" onchange="this.form.submit()">
+            <option value="">-- Select --</option>
+            <option value="course" {% if filter_type == 'course' %}selected{% endif %}>Course Number</option>
+            <option value="professor" {% if filter_type == 'professor' %}selected{% endif %}>Professor</option>
+            <option value="level" {% if filter_type == 'level' %}selected{% endif %}>Course Level</option>
+        </select>
+        <br><br>
+
+        {% if filter_type == 'course' %}
+            <label for="course_number">Select Course:</label>
+            <select name="course_number">
+                <option value="">-- All --</option>
+                {% for course in courses %}
+                    <option value="{{ course }}" {% if course == request.form.course_number %}selected{% endif %}>{{ course }}</option>
+                {% endfor %}
+            </select>
+        {% elif filter_type == 'professor' %}
+            <label for="instructor">Select Professor:</label>
+            <select name="instructor">
+                <option value="">-- All --</option>
+                {% for instructor in instructors %}
+                    <option value="{{ instructor }}" {% if instructor == request.form.instructor %}selected{% endif %}>{{ instructor }}</option>
+                {% endfor %}
+            </select>
+        {% elif filter_type == 'level' %}
+            <label for="level">Select Level:</label>
+            <select name="level">
+                <option value="">-- All --</option>
+                {% for level in levels %}
+                    <option value="{{ level }}" {% if level == request.form.level %}selected{% endif %}>{{ level }}</option>
+                {% endfor %}
+            </select>
+        {% endif %}
+
+        <br><br>
+        <button type="submit">Filter</button>
+    </form>
+
+    <hr>
+
+    {% if results %}
+        <h2>Recommendations:</h2>
+        <ul>
+            {% for result in results %}
+                <li>
+                    <strong>{{ result.course_number }} - {{ result.course_name }}</strong><br>
+                    Instructor: {{ result.instructor }}<br>
+                    Teaching Score: {{ result.teaching_score }}<br>
+                    Challenge Score: {{ result.challenge_score }}<br>
+                    Workload Score: {{ result.workload_score }}<br>
+                    {{ result.summary }}
+                </li>
+                <br>
+            {% endfor %}
+        </ul>
+    {% endif %}
+</body>
+</html>
