@@ -52,153 +52,273 @@
 <h2 id="scatter-title"></h2>
 <div id="scatter" style="width:100%;height:500px;"></div>
 
+<hr>
+<h2>Course map (PCA / t-SNE)</h2>
+<div class="controls">
+  <label>Method:
+    <select id="embed-method">
+      <option value="pca">PCA (fast)</option>
+      <option value="tsne">t-SNE (slow)</option>
+    </select>
+  </label>
+
+  <label><input type="checkbox" id="embed-cluster"> Auto-cluster (DBSCAN)</label>
+
+  <label style="margin-left:1rem;">DBSCAN eps:
+    <input type="range" id="eps" min="0.5" max="6" step="0.1" value="2.2">
+    <span id="eps-val">2.2</span>
+  </label>
+
+  <label style="margin-left:1rem;">Colour by:
+    <select id="colour-by">
+      <option value="cluster">Cluster</option>
+      <option value="dept">Department</option>
+      <option value="level">Course level</option>
+      <option value="none" selected>None</option>
+    </select>
+  </label>
+
+  <button id="embed-refresh" class="plot-btn">Refresh map</button>
+</div>
+
+<div id="embed" style="width:100%;height:600px;"></div>
+<div id="cluster-summary"></div>
+
+<hr>
+<h3>Find courses in the same cluster</h3>
+<div class="controls">
+  <label>Course code:
+    <input id="rec-course" placeholder="AS.020.101">
+  </label>
+  <label>Year:
+    <input id="rec-year" size="4" placeholder="2023">
+  </label>
+  <label>Term:
+    <select id="rec-term">
+      <option value="">any</option>
+      {% for t in terms %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+    </select>
+  </label>
+  <button id="rec-btn" class="plot-btn">Recommend</button>
+</div>
+
+<div id="rec-table" style="margin-top:1rem;"></div>
+
+<hr>
+<h2>Time-series by department / course</h2>
+<div class="controls">
+  <label>Mode:
+    <select id="ts-mode">
+      <option value="dept">Department(s)</option>
+      <option value="course">Course code</option>
+    </select>
+  </label>
+  <label>Dept(s) or Course: <input id="ts-codes" placeholder="AS.020 (comma-sep)…"></label>
+  <label>Metric: <select id="ts-metric"></select></label>
+
+  <label>Year(s):
+    <select id="ts-years" multiple size="4">
+      {% for y in years %}<option value="{{ y }}">{{ y }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Term(s):
+    <select id="ts-terms" multiple size="4">
+      {% for t in terms %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+    </select>
+  </label>
+
+  <label><input type="checkbox" id="ts-trend" checked> Show regression lines</label>
+  <button id="ts-refresh" class="plot-btn" disabled>Refresh line plot</button>
+</div>
+
+<div id="timeseries" style="width:100%;height:500px;"></div>
+
 <script>
-const xSel    = document.getElementById('x-select');
-const ySel    = document.getElementById('y-select');
-const yearSel = document.getElementById('year-select');
-const termSel = document.getElementById('term-select');
-const refresh = document.getElementById('refresh-btn');
-const swapBtn = document.getElementById('swap-btn');
-const colorSel = document.getElementById('color-select');
+const $  = id => document.getElementById(id);
+const qs = o  => new URLSearchParams(o).toString();
+
+$('eps').oninput = e => $('eps-val').textContent = e.target.value;
+
+let METRICS = [];
+
+const xSel=$('x-select'), ySel=$('y-select'), yearSel=$('year-select'),
+      termSel=$('term-select'), colorSel=$('color-select');
+
+$('swap-btn').onclick = ()=>{ [xSel.value,ySel.value]=[ySel.value,xSel.value]; drawScatter(); };
+$('refresh-btn').onclick = drawScatter;
 
 fetch("{{ url_for('analytics.scatter_json') }}")
-  .then(r => r.json())
-  .then(init => {
-    const selects = [xSel, ySel].concat(colorSel ? [colorSel] : []);
-    init.metrics.forEach(m => {
-      selects.forEach(sel => {
-        const opt = document.createElement('option');
-        opt.value = opt.text = m;
-        sel.appendChild(opt.cloneNode(true));
+  .then(r=>r.json())
+  .then(init=>{
+    METRICS = init.metrics;
+
+    [xSel,ySel].forEach(sel=>{
+      METRICS.forEach(m=>{
+        const o=document.createElement('option'); o.value=o.text=m; sel.appendChild(o.cloneNode(true));
       });
     });
-    xSel.value = init.metrics[0] || '';
-    ySel.value = init.metrics[1] || init.metrics[0] || '';
-    drawPlot();
-  })
-  .catch(console.error);
+    xSel.value = METRICS[0] || '';
+    ySel.value = METRICS[1] || METRICS[0] || '';
 
-refresh.addEventListener('click', drawPlot);
-swapBtn.addEventListener('click', () => {
-  [xSel.value, ySel.value] = [ySel.value, xSel.value];
-  drawPlot();
-});
+    const tsMetric=$('ts-metric');
+    METRICS.forEach(m=>{
+      const o=document.createElement('option'); o.value=o.text=m; tsMetric.appendChild(o);
+    });
+    tsMetric.value = METRICS[0] || '';
+    $('ts-refresh').disabled=false;
 
-function drawPlot () {
-  const x = xSel.value;
-  const y = ySel.value;
-  const titleText = `${x} vs ${y}`;
-  document.getElementById('scatter-title').textContent = titleText;
-  const params = new URLSearchParams({
-    x, y,
-    year: yearSel.value, term: termSel.value
+    drawScatter();
+    drawEmbed();
   });
-  if (colorSel && colorSel.value) params.append('color', colorSel.value);
 
-  fetch("{{ url_for('analytics.scatter_json') }}?" + params.toString())
-    .then(r => r.json())
-    .then(d => {
-      const titleText = `${x} vs ${y}`;
-      document.getElementById('scatter-title').textContent = titleText;
-      const trace = {
-        x: d.x, y: d.y, text: d.course_name,
-        mode: 'markers',
-        marker: { size: 8, opacity: 0.7, ...(d.color && { color: d.color }) },
-        customdata: d.course.map((c,i)=>[c,d.instructor[i],d.year[i],d.term[i]]),
+function drawScatter(){
+  const p={x:xSel.value,y:ySel.value,year:yearSel.value,term:termSel.value};
+  if(colorSel&&colorSel.value) p.color=colorSel.value;
+  fetch("{{ url_for('analytics.scatter_json') }}?"+qs(p))
+    .then(r=>r.json())
+    .then(d=>{
+      $('scatter-title').textContent=`${xSel.value} vs ${ySel.value}`;
+      const trace={
+        x:d.x,y:d.y,text:d.course_name,mode:'markers',
+        marker:{size:8,opacity:0.7,...(d.color&&{color:d.color})},
+        customdata:d.course.map((c,i)=>[c,d.instructor[i],d.year[i],d.term[i]]),
         hovertemplate:
           'Course: %{customdata[0]}<br>Name: %{text}<br>' +
           'Instructor: %{customdata[1]}<br>Year: %{customdata[2]}<br>' +
           'Term: %{customdata[3]}<br>' +
           `${xSel.value}: %{x:.2f}<br>${ySel.value}: %{y:.2f}<extra></extra>`
       };
-      Plotly.react('scatter',[trace],
-        {margin: { t: 20 },
-         xaxis:{title:xSel.value}, yaxis:{title:ySel.value}});
-    })
-    .catch(console.error);
+      Plotly.react('scatter',[trace],{margin:{t:20},xaxis:{title:xSel.value},yaxis:{title:ySel.value}});
+    });
 }
-</script>
 
-<hr>
-<h2>Time-series by department / course</h2>
-<div class="controls">
-  <div class="control">
-    <label>Mode:
-      <select id="ts-mode">
-        <option value="dept">Department(s)</option>
-        <option value="course">Course code</option>
-      </select>
-    </label>
-  </div>
-  <div class="control">
-    <label>Dept(s) or Course:
-      <input id="ts-codes" placeholder="AS.020 (comma-sep)…">
-    </label>
-  </div>
-  <div class="control">
-    <label>Metric: <select id="ts-metric"></select></label>
-  </div>
-  <div class="control">
-    <label>Year(s):
-      <select id="ts-years" multiple size="4">
-        {% for y in years %}<option value="{{ y }}">{{ y }}</option>{% endfor %}
-      </select>
-    </label>
-  </div>
-  <div class="control">
-    <label>Term(s):
-      <select id="ts-terms" multiple size="4">
-        {% for t in terms %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
-      </select>
-    </label>
-  </div>
-  <div class="control">
-    <label><input type="checkbox" id="ts-trend" checked> Show regression lines</label>
-  </div>
-  <div class="control"><button id="ts-refresh" class="plot-btn">Refresh line plot</button></div>
-</div>
+$('embed-refresh').onclick  = drawEmbed;
+$('colour-by').onchange     = drawEmbed;
+$('embed-method').onchange  = drawEmbed;
+$('embed-cluster').onchange = drawEmbed;
+$('eps').onchange           = drawEmbed;
 
-<div id="timeseries" style="width:100%;height:500px;"></div>
+function drawEmbed(){
+  const args={method:$('embed-method').value};
+  if($('embed-cluster').checked) Object.assign(args,{cluster:'dbscan',eps:$('eps').value});
+  fetch("{{ url_for('analytics.course_embedding') }}?"+qs(args))
+    .then(r=>r.json()).then(renderEmbed);
+}
 
-<script>
-const tsMode  = document.getElementById('ts-mode');
-const tsCodes = document.getElementById('ts-codes');
-const tsMetric= document.getElementById('ts-metric');
-const tsYears = document.getElementById('ts-years');
-const tsTerms = document.getElementById('ts-terms');
-const tsBtn   = document.getElementById('ts-refresh');
-const tsTrend = document.getElementById('ts-trend');
+function colourArray(mode,d){
+  if(mode==='dept')   return d.dept;
+  if(mode==='level')  return d.level;
+  if(mode==='cluster' && d.cluster) return d.cluster;
+  return undefined;
+}
+function renderEmbed(d){
+  const mode=$('colour-by').value;
+  const trace={
+    x:d.x,y:d.y,text:d.course,mode:'markers',
+    marker:{size:8,opacity:0.8,color:colourArray(mode,d),
+            colorscale:mode!=='none'?'Viridis':undefined},
+    customdata:d.course.map((c,i)=>[
+      c,d.name[i],d.instructor[i],d.year[i],d.term[i],d.cluster?d.cluster[i]:null]),
+    hovertemplate:
+      'Course: %{customdata[0]}<br>%{customdata[1]}<br>'+
+      'Instructor: %{customdata[2]}<br>'+
+      'Year: %{customdata[3]} %{customdata[4]}<br>'+
+      (mode==='cluster'?'Cluster: %{customdata[5]}<br>':'')+
+      '<extra></extra>'
+  };
+  Plotly.react('embed',[trace],{margin:{t:20},title:'Course map'});
+  $('cluster-summary').innerHTML='';
+}
 
-fetch("{{ url_for('analytics.scatter_json') }}")
-  .then(r=>r.json())
-  .then(d=>{ d.metrics.forEach(m=>{
-      const o=document.createElement('option');o.value=o.text=m;tsMetric.appendChild(o);
-  });});
+$('embed').addEventListener('plotly_selected', ev => {
+  if (!ev || !ev.points.length) return;
+  const courses = ev.points.map(p => p.text).join(',');
+  fetch("{{ url_for('analytics.cluster_summary') }}?courses=" + courses)
+    .then(r => r.json()).then(renderSummary);
+});
 
-tsBtn.addEventListener('click', drawTS); tsTrend.addEventListener('change',drawTS);
+$('embed').addEventListener('plotly_hover', ev => {
+  const cid = ev.points[0].data.marker.color?.[ev.points[0].pointIndex];
+  if (cid == null || cid < 0) return;
+  const p = {
+    cluster: cid,
+    eps:     $('eps').value,
+    method:  $('embed-method').value
+  };
+  fetch("{{ url_for('analytics.cluster_summary') }}?" + qs(p))
+    .then(r => r.json()).then(renderSummary);
+});
+
+function renderSummary(s){
+  if(s.error) return;
+  const list=Object.entries(s.metrics).sort((a,b)=>b[1]-a[1]).slice(0,5)
+               .map(([k,v])=>`<li>${k.replace(/:_mean$/,'')}: <strong>${v}</strong></li>`).join('');
+  $('cluster-summary').innerHTML=
+    `<div class="card" style="padding:1rem;margin-top:1rem;">
+       <h3>Cluster (${s.n_courses} course${s.n_courses>1?'s':''})</h3>
+       <p><em>Top depts:</em> ${s.top_departments.join(', ')}</p>
+       <ul>${list}</ul>
+     </div>`;
+}
+
+$('rec-btn').onclick = getRecommendations;
+
+function getRecommendations() {
+  const p = {
+    course : $('rec-course').value,
+    year   : $('rec-year').value,
+    term   : $('rec-term').value,
+    method : $('embed-method').value,
+    eps    : $('eps').value
+  };
+  fetch("{{ url_for('analytics.recommend') }}?" + qs(p))
+    .then(r => r.json())
+    .then(showRec);
+}
+
+function showRec(recs) {
+  if (!recs.length) {
+    $('rec-table').innerHTML = '<p><em>No matches found for that course / term.</em></p>';
+    return;
+  }
+  const cols  = Object.keys(recs[0]);
+  const head  = cols.map(c => `<th>${c.replace('_',' ').replace(/\b\w/g,l=>l.toUpperCase())}</th>`).join('');
+  const rows  = recs.map(r =>
+                 '<tr>' + cols.map(c => `<td>${r[c]}</td>`).join('') + '</tr>').join('');
+  $('rec-table').innerHTML =
+    `<table border="1" cellpadding="6" cellspacing="0">
+       <thead><tr>${head}</tr></thead>
+       <tbody>${rows}</tbody>
+     </table>`;
+}
+
+$('ts-refresh').onclick = drawTS;
+$('ts-trend').onchange  = drawTS;
 
 function drawTS(){
-  const years=Array.from(tsYears.selectedOptions).map(o=>o.value).join(',');
-  const terms=Array.from(tsTerms.selectedOptions).map(o=>o.value).join(',');
-  const p=new URLSearchParams({metric:tsMetric.value,years,terms});
-  if(tsMode.value==='dept') p.append('depts',tsCodes.value); else p.append('course',tsCodes.value);
-  const ep = tsMode.value==='dept'
-    ? "{{ url_for('analytics.dept_timeseries') }}"
-    : "{{ url_for('analytics.course_timeseries') }}";
+  const years = [...$('ts-years').selectedOptions].map(o=>o.value).join(',');
+  const terms = [...$('ts-terms').selectedOptions].map(o=>o.value).join(',');
+  const p={metric:$('ts-metric').value, years, terms};
+  if($('ts-mode').value==='dept') p.depts=$('ts-codes').value;
+  else                             p.course=$('ts-codes').value;
 
-  fetch(ep+'?'+p.toString()).then(r=>r.json()).then(d=>{
-    const traces=d.series.flatMap(s=>{
-      const main={name:s.label,x:s.x,y:s.y,mode:'lines+markers',connectgaps:true};
-      if(!tsTrend.checked) return [main];
-      return [main,{name:`${s.label} trend`,x:s.x,y:s.trend,mode:'lines',
-                    line:{dash:'dash'},hoverinfo:'skip',showlegend:false}];
+  const ep = $('ts-mode').value==='dept'
+             ? "{{ url_for('analytics.dept_timeseries') }}"
+             : "{{ url_for('analytics.course_timeseries') }}";
+  fetch(ep+'?'+qs(p))
+    .then(r=>r.json()).then(d=>{
+      const traces=d.series.flatMap(s=>{
+        const main={name:s.label,x:s.x,y:s.y,mode:'lines+markers',connectgaps:true};
+        if(!$('ts-trend').checked) return [main];
+        return [main,{name:`${s.label} trend`,x:s.x,y:s.trend,mode:'lines',
+                      line:{dash:'dash'},hoverinfo:'skip',showlegend:false}];
+      });
+      const isDate=traces.length&&/^\d{4}-\d{2}-\d{2}$/.test(traces[0].x[0]);
+      Plotly.react('timeseries',traces,{
+        title:d.metric+' over time',
+        xaxis:{title:'Time',tickangle:-45,...(isDate&&{type:'date'})},
+        yaxis:{title:d.metric}});
     });
-    const isDate = traces.length && /^\d{4}-\d{2}-\d{2}$/.test(traces[0].x[0]);
-    Plotly.react('timeseries',traces,{
-      title:d.metric+' over time',
-      xaxis:{title:'Time',tickangle:-45,...(isDate && {type:'date'})},
-      yaxis:{title:d.metric}});
-  }).catch(console.error);
 }
 </script>
 {% endblock %}

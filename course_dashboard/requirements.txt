@@ -5,3 +5,4 @@ matplotlib
 plotly
 pyarrow
 flask_caching
+kneed

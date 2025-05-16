@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import re
 from ..data_loader import load_course_data
+import collections
 
 analytics_bp = Blueprint("analytics", __name__)
 
@@ -260,3 +261,145 @@ def course_timeseries():
         })
 
     return jsonify(out)
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+from sklearn.cluster import DBSCAN
+import joblib
+
+
+def _fit_embedding(X: pd.DataFrame, qp: dict[str, str]) -> np.ndarray:
+    method = qp.get("method", "pca").lower()
+    X_std  = StandardScaler().fit_transform(X)
+    if method == "tsne":
+        params = dict(perplexity=float(qp.get("perplexity", 30)),
+                      n_iter=int(qp.get("n_iter", 1000)),
+                      random_state=0)
+        return TSNE(n_components=2, **params).fit_transform(X_std)
+    return PCA(n_components=2, random_state=0).fit_transform(X_std)
+
+def _dbscan_labels(emb, qp):
+    return DBSCAN(
+        eps=float(qp.get("eps", 2.0)),
+        min_samples=int(qp.get("min_samples", 5)),
+    ).fit_predict(emb)
+
+@analytics_bp.route("/course_embedding")
+def course_embedding():
+    df       = load_course_data()
+    metrics  = [c for c in df.columns if c.endswith("_mean")]
+    X        = df[metrics].dropna()
+    meta     = df.loc[X.index, ["course_number", "course_name",
+                                "instructor", "year", "term"]]
+    cache    = joblib.Memory("/tmp/jhu_eval_cache", verbose=0)
+    emb      = cache.cache(_fit_embedding)(X, request.args)
+
+    payload = {
+        "x"   : emb[:, 0].tolist(),
+        "y"   : emb[:, 1].tolist(),
+        "course"    : meta.course_number.tolist(),
+        "name"      : meta.course_name.tolist(),
+        "dept"      : meta.course_number.str.split('.').str[0:2].str.join('.').tolist(),
+        "level"     : meta.course_number.str.extract(r'\.(\d)').iloc[:,0].fillna('').tolist(),
+        "instructor": meta.instructor.tolist(),
+        "year"      : meta.year.astype(int).tolist(),
+        "term"      : meta.term.tolist()
+    }
+
+    if request.args.get("cluster") == "dbscan":
+        labels = _dbscan_labels(emb, request.args)
+        payload["cluster"] = labels.tolist()
+
+        clust_stats = collections.defaultdict(list)
+        for lbl, row in zip(labels, meta.itertuples()):
+            if lbl < 0:
+                continue
+            clust_stats[lbl].append(row.course_number)
+        payload["cluster_stats"] = {int(k): v for k, v in clust_stats.items()}
+        level = (
+            meta.course_number
+                .str.extract(r'\.(\d{3})$')[0]
+                .astype('Int64')
+                .floordiv(100)
+        )
+        payload["level"] = level.tolist()
+
+    return jsonify(payload)
+
+@analytics_bp.route("/cluster_summary")
+def cluster_summary():
+    """
+    Either:
+      /cluster_summary?courses=AS.020.101,…
+    or
+      /cluster_summary?cluster=7&method=tsne&eps=2.0  (re-runs DBSCAN server-side)
+    """
+    df       = load_course_data()
+    metrics  = [c for c in df.columns if c.endswith("_mean")]
+
+    if 'cluster' in request.args:
+        qp   = request.args.to_dict()
+        X    = df[metrics].dropna()
+        emb  = _fit_embedding(X, qp)
+        lbls = _dbscan_labels(emb, qp)
+        target = int(qp['cluster'])
+        mask   = lbls == target
+        sub    = df.loc[X.index[mask]]
+    else:
+        courses = [c.strip() for c in request.args.get("courses", "").split(',') if c]
+        sub     = df[df.course_number.isin(courses)]
+
+    if sub.empty:
+        return jsonify({"error":"no data"}), 400
+
+    out = {
+        "n_courses"    : int(sub.course_number.nunique()),
+        "top_departments" : (sub.course_number.str.split('.').str[0:2]
+                             .str.join('.').value_counts().head(3).index.tolist()),
+        "mean_effectiveness" : round(sub["The instructor's teaching effectiveness is:_mean"].mean(), 2),
+        "mean_workload"      : round(sub["Compared to other Hopkins courses at this level, the workload for this course is:_mean"].mean(), 2)
+    }
+    out["metrics"] = sub[metrics].mean().round(2).to_dict()
+    return jsonify(out)
+
+@analytics_bp.route("/recommend")
+def recommend():
+    df       = load_course_data()
+    metrics  = [c for c in df.columns if c.endswith("_mean")]
+
+    code  = request.args.get("course", "").strip()
+    year  = request.args.get("year")
+    term  = request.args.get("term")
+
+    mask = df.course_number.str.upper() == code.upper()
+    if year:
+        mask &= df["year"].fillna(-1).astype(int) == int(year)
+    if term:
+        mask &= df["term"].astype(str).str.strip().str.title() == term.strip().title()
+    if not mask.any():
+        return jsonify([])
+
+    X      = df[metrics].dropna()
+    emb    = _fit_embedding(X, request.args)
+    labels = _dbscan_labels(emb, request.args)
+
+    target_idx  = set(df[mask].index)
+    target_lbls = {lbl for i, lbl in zip(X.index, labels) if i in target_idx}
+    if not target_lbls or -1 in target_lbls:
+        return jsonify([])
+
+    lbl         = target_lbls.pop()
+    rec_idx     = [i for i, l in zip(X.index, labels)
+                   if l == lbl and i not in target_idx]
+    sub = df.loc[rec_idx,
+             ["course_number", "course_name",
+              "instructor", "year", "term"]]
+    sub = sub[sub.course_number.str.upper() != code.upper()]
+    sub = (sub
+       .sort_values(["course_number", "year", "term"])
+       .drop_duplicates(subset=["course_number", "year", "term"],
+                        keep="first"))
+    sub = sub.drop_duplicates()
+
+    return jsonify(sub.to_dict(orient="records"))
