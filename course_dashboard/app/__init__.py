@@ -14,4 +14,7 @@ def create_app():
     from .routes.analytics import analytics_bp
     app.register_blueprint(analytics_bp, url_prefix='/analytics')
 
+    from .routes.rec import rec_bp
+    app.register_blueprint(rec_bp)
+
     return app
