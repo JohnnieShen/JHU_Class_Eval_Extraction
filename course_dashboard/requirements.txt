@@ -6,3 +6,4 @@ plotly
 pyarrow
 flask_caching
 kneed
+scikit-learn
